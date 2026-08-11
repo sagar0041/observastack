@@ -40,7 +40,24 @@ docker compose up -d          # observability stack + Postgres
 mvn verify                    # build and test all modules
 ```
 
-Grafana is at http://localhost:3000.
+Kafka isn't needed until M8, so it's excluded from the default stack.
+Bring it up explicitly when a service needs it:
+
+```bash
+docker compose --profile kafka up -d
+```
+
+| Service    | URL / port              | Credentials     |
+|------------|--------------------------|------------------|
+| Grafana    | http://localhost:3000    | admin / admin    |
+| Prometheus | http://localhost:9090    | —                |
+| Loki       | http://localhost:3100    | —                |
+| Tempo      | http://localhost:3200, OTLP on 4317 (gRPC) / 4318 (HTTP) | — |
+| PostgreSQL | localhost:5432            | observastack / observastack |
+| Kafka      | localhost:29092 (`--profile kafka`) | — |
+
+Grafana comes up with Prometheus, Loki, and Tempo already wired in as
+datasources — nothing to configure by hand.
 
 ## Documentation
 
