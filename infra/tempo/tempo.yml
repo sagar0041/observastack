@@ -1,0 +1,9 @@
+# Minimal Tempo config for local dev.
+# TODO (P3): confirm OTLP receiver settings match the app services' exporters.
+server:
+  http_listen_port: 3200
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:

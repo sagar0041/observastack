@@ -1,0 +1,5 @@
+# Minimal single-binary Loki config for local dev.
+# TODO (P4): confirm retention + label settings once real log volume exists.
+auth_enabled: false
+server:
+  http_listen_port: 3100

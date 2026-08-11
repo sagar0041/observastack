@@ -1,0 +1,19 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      # TODO (P0): point this at the actual build tool/module structure
+      # once services/ exists.
+      - name: Build (placeholder)
+        run: echo "Add real build steps once order-service exists (P1)"
