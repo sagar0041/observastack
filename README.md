@@ -59,6 +59,24 @@ docker compose --profile kafka up -d
 Grafana comes up with Prometheus, Loki, and Tempo already wired in as
 datasources — nothing to configure by hand.
 
+Once Postgres is up, run `order-service` (only service that exists so
+far — `inventory-service` and `payment-service` land in M3 and M8):
+
+```bash
+mvn -pl services/order-service -am spring-boot:run
+```
+
+It listens on http://localhost:8081 and migrates its own schema via
+Liquibase on startup.
+
+```bash
+curl -X POST http://localhost:8081/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"11111111-1111-1111-1111-111111111111","lineItems":[{"sku":"WIDGET-1","quantity":2,"unitPrice":9.99}]}'
+
+curl http://localhost:8081/orders/{id}
+```
+
 ## Documentation
 
 - [AGENTS.md](./AGENTS.md) — stack, package structure, Javadoc standard

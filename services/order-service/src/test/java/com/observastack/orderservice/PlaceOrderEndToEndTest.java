@@ -1,0 +1,83 @@
+package com.observastack.orderservice;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.observastack.orderservice.api.dto.ErrorResponse;
+import com.observastack.orderservice.api.dto.OrderResponse;
+import com.observastack.orderservice.api.dto.PlaceOrderRequest;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+/**
+ * Exercises order placement end to end: real HTTP request, real Spring
+ * context, real PostgreSQL migrated by the actual Liquibase changelog —
+ * nothing mocked or substituted.
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Testcontainers
+class PlaceOrderEndToEndTest {
+
+    @Container
+    @ServiceConnection
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16.4");
+
+    @Autowired
+    private TestRestTemplate restTemplate;
+
+    @Test
+    void placeOrder_persistsOrder_andIsRetrievableById() {
+        UUID customerId = UUID.randomUUID();
+        PlaceOrderRequest request = new PlaceOrderRequest(
+                customerId,
+                List.of(new PlaceOrderRequest.LineItemRequest("WIDGET-1", 2, new BigDecimal("9.99"))));
+
+        ResponseEntity<OrderResponse> placeResponse = restTemplate.postForEntity("/orders", request, OrderResponse.class);
+
+        assertThat(placeResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(placeResponse.getHeaders().getLocation()).isNotNull();
+        OrderResponse placed = placeResponse.getBody();
+        assertThat(placed).isNotNull();
+        assertThat(placed.status()).isEqualTo("PLACED");
+        assertThat(placed.customerId()).isEqualTo(customerId);
+        assertThat(placed.totalPrice()).isEqualByComparingTo("19.98");
+        assertThat(placed.placedAt()).isNotNull();
+
+        ResponseEntity<OrderResponse> getResponse =
+                restTemplate.getForEntity("/orders/" + placed.id(), OrderResponse.class);
+
+        assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        OrderResponse fetched = getResponse.getBody();
+        assertThat(fetched).isNotNull();
+        assertThat(fetched.id()).isEqualTo(placed.id());
+        assertThat(fetched.lineItems()).hasSize(1);
+        assertThat(fetched.lineItems().get(0).sku()).isEqualTo("WIDGET-1");
+    }
+
+    @Test
+    void getOrder_returnsNotFound_whenOrderDoesNotExist() {
+        ResponseEntity<ErrorResponse> response =
+                restTemplate.getForEntity("/orders/" + UUID.randomUUID(), ErrorResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void placeOrder_returnsBadRequest_whenLineItemsIsEmpty() {
+        PlaceOrderRequest request = new PlaceOrderRequest(UUID.randomUUID(), List.of());
+
+        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity("/orders", request, ErrorResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+}
