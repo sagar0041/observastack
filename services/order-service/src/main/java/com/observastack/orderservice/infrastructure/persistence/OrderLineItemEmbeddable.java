@@ -23,6 +23,9 @@ public class OrderLineItemEmbeddable {
     @Column(name = "unit_price", nullable = false)
     private BigDecimal unitPrice;
 
+    @Column(name = "currency", nullable = false, length = 3)
+    private String currency;
+
     protected OrderLineItemEmbeddable() {
         // required by JPA
     }
@@ -49,5 +52,13 @@ public class OrderLineItemEmbeddable {
 
     public void setUnitPrice(BigDecimal unitPrice) {
         this.unitPrice = unitPrice;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
     }
 }

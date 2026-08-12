@@ -1,14 +1,17 @@
 package com.observastack.orderservice.api;
 
 import com.observastack.orderservice.api.dto.ErrorResponse;
+import com.observastack.orderservice.domain.DuplicateIdempotencyKeyException;
 import com.observastack.orderservice.domain.EmptyOrderException;
 import com.observastack.orderservice.domain.IllegalOrderStateException;
+import com.observastack.orderservice.domain.MixedCurrencyException;
 import com.observastack.orderservice.domain.OrderNotFoundException;
 import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -23,8 +26,19 @@ class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse.of(HttpStatus.NOT_FOUND, ex.getMessage()));
     }
 
-    @ExceptionHandler({EmptyOrderException.class, IllegalOrderStateException.class, IllegalArgumentException.class})
-    ResponseEntity<ErrorResponse> handleBadRequest(RuntimeException ex) {
+    @ExceptionHandler(DuplicateIdempotencyKeyException.class)
+    ResponseEntity<ErrorResponse> handleDuplicateIdempotencyKey(DuplicateIdempotencyKeyException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.of(HttpStatus.CONFLICT, ex.getMessage()));
+    }
+
+    @ExceptionHandler({
+        EmptyOrderException.class,
+        MixedCurrencyException.class,
+        IllegalOrderStateException.class,
+        IllegalArgumentException.class,
+        MissingRequestHeaderException.class
+    })
+    ResponseEntity<ErrorResponse> handleBadRequest(Exception ex) {
         return ResponseEntity.badRequest().body(ErrorResponse.of(HttpStatus.BAD_REQUEST, ex.getMessage()));
     }
 
@@ -37,9 +51,11 @@ class ApiExceptionHandler {
     }
 
     // Defense in depth: PlaceOrderRequest's Bean Validation constraints
-    // should catch an oversized SKU or price before this point, but if a
-    // database constraint rejects the write anyway, that's still bad
-    // input, not a server bug — a 500 here would be misleading.
+    // should catch an oversized SKU or price before this point, and a
+    // duplicate idempotency key is translated to
+    // DuplicateIdempotencyKeyException before it gets here — but if some
+    // other database constraint rejects the write anyway, that's still
+    // bad input, not a server bug, so a 500 here would be misleading.
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
         return ResponseEntity.badRequest().body(ErrorResponse.of(HttpStatus.BAD_REQUEST, "request violates a data constraint"));

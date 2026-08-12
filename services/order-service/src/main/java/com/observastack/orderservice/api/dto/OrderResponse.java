@@ -7,12 +7,14 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Response body for {@code POST /orders} and {@code GET /orders/{id}}.
+ * Response body for {@code POST /orders}, {@code GET /orders/{id}}, and
+ * {@code POST /orders/{id}/cancel}.
  */
 public record OrderResponse(
         UUID id,
         UUID customerId,
         String status,
+        String currency,
         List<LineItemResponse> lineItems,
         BigDecimal totalPrice,
         Instant createdAt,
@@ -39,6 +41,7 @@ public record OrderResponse(
                 order.id().value(),
                 order.customerId().value(),
                 order.status().name(),
+                order.currency().getCurrencyCode(),
                 items,
                 order.totalPrice().amount(),
                 order.createdAt(),

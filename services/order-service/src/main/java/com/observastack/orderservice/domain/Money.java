@@ -2,10 +2,12 @@ package com.observastack.orderservice.domain;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Currency;
 import java.util.Objects;
 
 /**
- * A non-negative monetary amount with exactly two decimal places.
+ * A non-negative monetary amount in a specific currency, with exactly
+ * two decimal places.
  *
  * <p>Scale is normalised to 2 on construction so that two amounts
  * representing the same value always compare equal ({@code "5"} and
@@ -14,13 +16,18 @@ import java.util.Objects;
  * two decimal places are rejected rather than silently rounded, since
  * that would hide a caller bug.
  *
- * @param amount the monetary amount; must not be null, negative, or carry
- *               more than two decimal places
+ * <p>{@link #add} refuses to combine amounts in different currencies —
+ * adding USD to EUR is not a smaller number, it's a different question.
+ *
+ * @param amount   the monetary amount; must not be null, negative, or
+ *                 carry more than two decimal places
+ * @param currency the amount's currency; must not be null
  */
-public record Money(BigDecimal amount) {
+public record Money(BigDecimal amount, Currency currency) {
 
     public Money {
         Objects.requireNonNull(amount, "amount must not be null");
+        Objects.requireNonNull(currency, "currency must not be null");
         if (amount.signum() < 0) {
             throw new IllegalArgumentException("amount must not be negative");
         }
@@ -31,34 +38,43 @@ public record Money(BigDecimal amount) {
     }
 
     /**
-     * The zero amount, {@code 0.00}.
+     * The zero amount, {@code 0.00}, in the given currency.
      *
+     * @param currency the currency of the zero amount; must not be null
      * @return zero money, never null
      */
-    public static Money zero() {
-        return new Money(BigDecimal.ZERO);
+    public static Money zero(Currency currency) {
+        return new Money(BigDecimal.ZERO, currency);
     }
 
     /**
-     * Wraps a {@link BigDecimal} as {@link Money}.
+     * Wraps a {@link BigDecimal} and {@link Currency} as {@link Money}.
      *
-     * @param amount the amount to wrap; must not be null, negative, or carry
-     *               more than two decimal places
+     * @param amount   the amount to wrap; must not be null, negative, or
+     *                 carry more than two decimal places
+     * @param currency the amount's currency; must not be null
      * @return the wrapped amount, never null
      */
-    public static Money of(BigDecimal amount) {
-        return new Money(amount);
+    public static Money of(BigDecimal amount, Currency currency) {
+        return new Money(amount, currency);
     }
 
     /**
-     * Adds another amount to this one.
+     * Adds another amount in the same currency to this one.
      *
-     * @param other the amount to add; must not be null
+     * @param other the amount to add; must not be null, and must be in
+     *              the same currency as this amount
      * @return the sum, never null
+     * @throws IllegalArgumentException if {@code other} is in a different
+     *                                  currency
      */
     public Money add(Money other) {
         Objects.requireNonNull(other, "other must not be null");
-        return new Money(this.amount.add(other.amount));
+        if (!this.currency.equals(other.currency)) {
+            throw new IllegalArgumentException(
+                    "cannot add " + other.currency.getCurrencyCode() + " to " + this.currency.getCurrencyCode());
+        }
+        return new Money(this.amount.add(other.amount), this.currency);
     }
 
     /**
@@ -72,6 +88,6 @@ public record Money(BigDecimal amount) {
         if (factor < 0) {
             throw new IllegalArgumentException("factor must not be negative");
         }
-        return new Money(this.amount.multiply(BigDecimal.valueOf(factor)));
+        return new Money(this.amount.multiply(BigDecimal.valueOf(factor)), this.currency);
     }
 }

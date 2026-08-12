@@ -1,0 +1,28 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0002-1-add-orders-idempotency-key
+      author: observastack
+      changes:
+        - addColumn:
+            tableName: orders
+            columns:
+              - column:
+                  name: idempotency_key
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+                    unique: true
+                    uniqueConstraintName: uq_orders_idempotency_key
+
+  - changeSet:
+      id: 0002-2-add-order-line-items-currency
+      author: observastack
+      changes:
+        - addColumn:
+            tableName: order_line_items
+            columns:
+              - column:
+                  name: currency
+                  type: varchar(3)
+                  constraints:
+                    nullable: false

@@ -72,10 +72,16 @@ Liquibase on startup.
 ```bash
 curl -X POST http://localhost:8081/orders \
   -H "Content-Type: application/json" \
-  -d '{"customerId":"11111111-1111-1111-1111-111111111111","lineItems":[{"sku":"WIDGET-1","quantity":2,"unitPrice":9.99}]}'
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"customerId":"11111111-1111-1111-1111-111111111111","currency":"USD","lineItems":[{"sku":"WIDGET-1","quantity":2,"unitPrice":9.99}]}'
 
 curl http://localhost:8081/orders/{id}
+curl -X POST http://localhost:8081/orders/{id}/cancel
 ```
+
+`Idempotency-Key` is required on `POST /orders` — a client retry that
+reuses the same key gets back the order already placed under it instead
+of creating a second one.
 
 ## Documentation
 

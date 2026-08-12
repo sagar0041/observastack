@@ -47,6 +47,12 @@ public class OrderEntity implements Persistable<UUID> {
     @Column(name = "customer_id", nullable = false)
     private UUID customerId;
 
+    // Currency lives on each line item's Money, not here — see
+    // OrderLineItemEmbeddable. A top-level column would just be the same
+    // fact stored twice, one copy of which could drift.
+    @Column(name = "idempotency_key", nullable = false, unique = true)
+    private String idempotencyKey;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private OrderStatusEntity status;
@@ -95,6 +101,14 @@ public class OrderEntity implements Persistable<UUID> {
 
     public void setCustomerId(UUID customerId) {
         this.customerId = customerId;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 
     public OrderStatusEntity getStatus() {
