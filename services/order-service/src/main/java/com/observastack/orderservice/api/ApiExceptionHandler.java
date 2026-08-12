@@ -5,6 +5,7 @@ import com.observastack.orderservice.domain.EmptyOrderException;
 import com.observastack.orderservice.domain.IllegalOrderStateException;
 import com.observastack.orderservice.domain.OrderNotFoundException;
 import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -33,5 +34,14 @@ class ApiExceptionHandler {
                 .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage())
                 .collect(Collectors.joining(", "));
         return ResponseEntity.badRequest().body(ErrorResponse.of(HttpStatus.BAD_REQUEST, message));
+    }
+
+    // Defense in depth: PlaceOrderRequest's Bean Validation constraints
+    // should catch an oversized SKU or price before this point, but if a
+    // database constraint rejects the write anyway, that's still bad
+    // input, not a server bug — a 500 here would be misleading.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        return ResponseEntity.badRequest().body(ErrorResponse.of(HttpStatus.BAD_REQUEST, "request violates a data constraint"));
     }
 }

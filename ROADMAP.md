@@ -115,7 +115,7 @@ layer's `PlaceOrderCommand` carries primitives, not domain types, so the
 use case — not the controller — is what turns them into `Sku`/`Money`/
 `OrderLineItem`.
 
-**Tests, 28 total, all passing:** `OrderTest`/`OrderLineItemTest`/
+**Tests, 30 total, all passing:** `OrderTest`/`OrderLineItemTest`/
 `MoneyTest` cover domain invariants with no Spring context;
 `OrderRepositoryImplTest` is `@DataJpaTest` against a real Testcontainers
 Postgres running the actual Liquibase changelog; `PlaceOrderEndToEndTest`
@@ -142,6 +142,32 @@ declaring `spring-boot-maven-plugin` without an explicit `repackage`
 execution produces a plain jar with no main manifest attribute — easy to
 miss since `mvn verify` doesn't run the jar, only builds it; caught by
 actually launching it.
+
+**Review round:** asked for a proper review after opening the PR. Two
+findings, both fixed:
+1. `PlaceOrderRequest` had no upper bound on SKU length or price
+   magnitude, so a SKU over 64 characters or a price with more than 10
+   integer digits passed Bean Validation and the domain layer, then
+   failed at the database (`sku varchar(64)`, `unit_price
+   numeric(12,2)`) as an unhandled `DataIntegrityViolationException` —
+   a 500, not the 400 a validation failure should be. Fixed with
+   `@Size(max = 64)` and `@Digits(integer = 10, fraction = 2)` on the
+   request DTO, plus a `DataIntegrityViolationException` handler as a
+   backstop for anything that still gets through. Covered by two new
+   `PlaceOrderEndToEndTest` cases.
+2. `OrderEntity` had no `@GeneratedValue` and didn't implement
+   `Persistable` — its id is assigned by the domain layer
+   (`OrderId.newId()`), so Spring Data JPA's default `isNew()` check
+   (id == null) always saw a non-null id and called `merge()` instead
+   of `persist()`, issuing a needless existence-checking `SELECT`
+   before every single insert. Fixed by implementing
+   `Persistable<UUID>` with a `@Transient isNew` flag reset by
+   `@PostLoad`/`@PostPersist`. Verified by hand — ran the built jar
+   against the real M1 Postgres with `spring.jpa.show-sql=true` and
+   confirmed placing an order now issues a bare `insert into orders`
+   with no preceding `select`; not covered by an automated test, since
+   asserting on statement counts wasn't already in this suite's toolkit
+   and adding one felt like more machinery than the fix warranted.
 
 Not verified: behavior against a differently-versioned Docker Engine or
 Postgres than this session's; concurrent placement requests (no

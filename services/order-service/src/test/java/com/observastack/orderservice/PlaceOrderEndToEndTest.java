@@ -80,4 +80,27 @@ class PlaceOrderEndToEndTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
+
+    @Test
+    void placeOrder_returnsBadRequest_whenSkuExceedsColumnLength() {
+        String tooLong = "X".repeat(65); // orders.sku is varchar(64)
+        PlaceOrderRequest request = new PlaceOrderRequest(
+                UUID.randomUUID(), List.of(new PlaceOrderRequest.LineItemRequest(tooLong, 1, BigDecimal.ONE)));
+
+        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity("/orders", request, ErrorResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void placeOrder_returnsBadRequest_whenUnitPriceExceedsColumnPrecision() {
+        // unit_price is numeric(12,2): 10 integer digits is the max it holds.
+        BigDecimal tooLarge = new BigDecimal("99999999999.99");
+        PlaceOrderRequest request = new PlaceOrderRequest(
+                UUID.randomUUID(), List.of(new PlaceOrderRequest.LineItemRequest("WIDGET-1", 1, tooLarge)));
+
+        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity("/orders", request, ErrorResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
 }
