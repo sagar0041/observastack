@@ -1,0 +1,74 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0001-1-create-orders-table
+      author: observastack
+      changes:
+        - createTable:
+            tableName: orders
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: customer_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: varchar(20)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamp with time zone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: placed_at
+                  type: timestamp with time zone
+              - column:
+                  name: cancelled_at
+                  type: timestamp with time zone
+
+  - changeSet:
+      id: 0001-2-create-order-line-items-table
+      author: observastack
+      changes:
+        - createTable:
+            tableName: order_line_items
+            columns:
+              - column:
+                  name: order_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_order_line_items_order
+                    references: orders(id)
+              - column:
+                  name: line_number
+                  type: integer
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sku
+                  type: varchar(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: quantity
+                  type: integer
+                  constraints:
+                    nullable: false
+              - column:
+                  name: unit_price
+                  type: numeric(12,2)
+                  constraints:
+                    nullable: false
+        - addPrimaryKey:
+            tableName: order_line_items
+            columnNames: order_id, line_number
+            constraintName: pk_order_line_items

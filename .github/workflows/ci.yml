@@ -13,7 +13,6 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-      # TODO (P0): point this at the actual build tool/module structure
-      # once services/ exists.
-      - name: Build (placeholder)
-        run: echo "Add real build steps once order-service exists (P1)"
+          cache: 'maven'
+      - name: Build and test
+        run: mvn -B verify
