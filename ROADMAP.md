@@ -7,7 +7,7 @@ Milestones are ordered. Each ships as one pull request.
       Loki, Tempo, PostgreSQL; verified starting cleanly
 - [x] **M2** Order Service — domain model, placement use case, REST API,
       PostgreSQL persistence via Liquibase
-- [ ] **M3** Inventory Service — stock reservation with concurrency
+- [x] **M3** Inventory Service — stock reservation with concurrency
       handling; Order calls it synchronously
 - [ ] **M4** Distributed tracing — OpenTelemetry agent on both services,
       Order → Inventory trace visible in Grafana
@@ -274,3 +274,130 @@ differently-versioned Docker Engine or Postgres than this session's;
 anything past M2's scope — no inventory call, no Kafka, no
 tracing/metrics/logs correlation (M3-M8), no resilience patterns ahead
 of M9.
+
+### 2026-08-21 — M3
+
+Added `services/inventory-service`, a second Spring Boot module with the
+same `domain`/`application`/`infrastructure`/`api` layout as
+`order-service`. It owns its own database, `inventory`, separate from
+`order-service`'s `observastack` (ADR 0004) — `infra/postgres/init-inventory-db.sh`
+creates it via Postgres's standard init-script mechanism.
+
+**Domain.** Two aggregates. `StockItem` (keyed by `Sku`) holds an
+`availableQuantity` and exposes `reserve(quantity)` /
+`release(quantity)`, both throwing on a non-positive quantity,
+`reserve` additionally throwing `InsufficientStockException` when
+quantity exceeds what's available. `Reservation` (keyed by a generated
+`ReservationId`, referencing an `OrderId`) holds the SKU/quantity lines
+it was created with and a `releasedAt` set at most once — releasing an
+already-released reservation throws `IllegalReservationStateException`.
+Stock only ever enters the system through `POST /stock-items`
+(`CreateStockItemService`) — no restock/adjustment API; deliberately out
+of scope for this milestone.
+
+**Concurrency.** This is the milestone's actual point, so it's worth
+stating the mechanism precisely. `StockItemEntity` carries a JPA
+`@Version` column; `StockItemRepositoryImpl.update()` loads the managed
+entity, applies the new quantity, and calls `flush()` inside a
+try/catch for `ObjectOptimisticLockingFailureException`, translating it
+to a domain `ConcurrentStockUpdateException`. `ReserveStockService` /
+`ReleaseStockService` catch that and retry the whole attempt (default
+10 attempts — deliberately generous, since retries are cheap and a low
+ceiling would wrongly reject a request that lost one race but still had
+stock available on the next attempt) through a *separate* collaborator
+bean, `StockLedgerWriter`. That split matters: `@Transactional` on a
+method only starts a new transaction when called from *outside* the
+bean, so a retry loop calling `this.reserveOnce()` on itself would
+silently reuse one open transaction across every attempt instead of
+getting a fresh one per try — a bug M2 hit once already and this
+milestone was designed from the start to avoid repeating. Two lines for
+the same SKU in one reservation request are aggregated into a single
+decrement before touching the database, rather than processed as two
+independent read-modify-write cycles that would lose one of them.
+
+Proven under real contention, not just reasoned about: `ReserveStockConcurrencyTest`
+seeds one SKU with 10 units, fires 25 threads at `POST /reservations`
+simultaneously (two `CountDownLatch`es — one for "every thread is ready
+and waiting", released together by a second — rather than just starting
+25 threads and hoping the OS schedules them close together), and asserts
+exactly 10 succeed, 15 are rejected as insufficient stock, and the final
+available quantity is exactly 0. Run three times to check for flakiness;
+stable all three times.
+
+**Order → Inventory integration.** `order-service` gained
+`InventoryPort` (application layer) — `reserve(OrderId, lines)` /
+`release(OrderId)` — with `InventoryClient` (`infrastructure/client`) as
+its only implementation, a `RestClient` with a 2s connect / 5s read
+timeout so a stalled inventory-service can't hang order placement
+indefinitely. `PlaceOrderService` now builds the order, attempts a
+reservation, and reacts to the two distinct failure shapes differently:
+`StockUnavailableException` (inventory looked and said no — a 409 or
+404 from a reservation attempt) is caught and the order is cancelled
+instead of placed, still returning 201 with a durable, retrievable
+`CANCELLED` order rather than an error response; anything else
+(`RestClientException` — inventory down, timed out, or erroring) is left
+to propagate, surfaced by `order-service`'s API as 503, because
+conflating "inventory said no" with "we couldn't even ask" would make an
+infrastructure outage look like an out-of-stock item to the caller.
+`CancelOrderService` releases the reservation, but only when the order
+was actually `PLACED` — a `CREATED`-then-cancelled order never had one.
+
+Idempotency on `POST /reservations` follows the same shape M2 already
+established for `POST /orders`, now written down as a rule in
+`AGENTS.md` rather than living only in two places by convention: the
+order's id is the natural key (one order has at most one reservation),
+backed by a unique constraint (`uq_reservations_order_id`) that
+`ReservationRepositoryImpl.save` translates into a domain
+`DuplicateReservationException` on the rare concurrent-race path, the
+same pattern `order-service`'s idempotency-key handling already used.
+
+**Tests.** 37 in `inventory-service` (domain invariants with no Spring
+context; `@DataJpaTest` repository tests against Testcontainers Postgres
+— including a deterministic optimistic-lock-conflict test that mutates a
+row via `TestEntityManager` native SQL to force a stale read without
+needing real threads; the full `@SpringBootTest` end-to-end suite; the
+concurrency test above). `order-service` grew from 44 to 46 plus a new
+7-test `InventoryClientTest` (53 total): `PlaceOrderEndToEndTest` now
+covers the stock-unavailable-cancels-instead-of-fails path and
+cancel-releases-the-reservation, using a hand-written `FakeInventoryPort`
+(`@TestConfiguration` + `@Primary`) rather than standing up a second real
+Spring Boot app with its own Testcontainers Postgres just to test how
+`order-service` reacts to a reservation outcome — that reaction is this
+test's job, inventory-service's own reservation logic is
+`inventory-service`'s test suite's job, and HTTP-response-to-exception
+translation is `InventoryClientTest`'s, using `MockRestServiceServer`
+against the real `InventoryClient`. 90 tests total across the reactor
+(53 in `order-service`, 37 in `inventory-service`), `mvn clean verify`
+green.
+
+Beyond the automated suite: ran both built jars against the real M1
+`docker-compose` Postgres (freshly recreated volume, to pick up the new
+`inventory` database) and drove the whole flow with `curl` — created a
+`WIDGET-1` stock item with 10 units, placed an order for 3 (confirmed
+`PLACED`, stock now 7), cancelled it (confirmed stock back to 10), then
+placed an order for 12 against 10 available and confirmed it came back
+`CANCELLED` with `placedAt: null` and stock untouched — the core
+concurrency-handling scenario the automated test proves under load,
+reproduced once here against real HTTP and real Postgres end to end.
+Confirmed with `psql \dt` against each database directly that
+`order-service`'s tables live only in `observastack` and
+`inventory-service`'s only in `inventory`.
+
+A latent bug was found and fixed along the way, in already-merged M2
+code: `OrderEntity.lineItems` was `@ElementCollection` with the JPA
+default (lazy) fetch, which worked in M2 only because every call site
+happened to run inside a transaction. Building `ReservationEntity`'s
+equivalent collection surfaced the general problem — a repository port
+should return fully-usable domain objects regardless of the caller's
+transactional context, and `ReserveStockService`'s idempotency check
+calls `findByOrderId` outside a transaction on purpose, to keep the
+retry loop's transaction boundaries in `StockLedgerWriter` — so both
+collections are now `FetchType.EAGER`, with the reasoning recorded on
+both entities.
+
+Not verified: behavior on a machine other than this session's container;
+`inventory-service` under a real network partition rather than a
+same-host localhost call (that's what M9's circuit breaker is scoped to
+address); any restock/inventory-adjustment path (doesn't exist yet, and
+wasn't asked for); tracing/metrics/logs correlation across the
+Order → Inventory HTTP call (M4-M6).

@@ -8,11 +8,15 @@ import com.observastack.orderservice.api.dto.PlaceOrderRequest;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -24,8 +28,17 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Exercises order placement end to end: real HTTP request, real Spring
- * context, real PostgreSQL migrated by the actual Liquibase changelog —
- * nothing mocked or substituted.
+ * context, real PostgreSQL migrated by the actual Liquibase changelog.
+ *
+ * <p>Inventory is the one dependency not real here: {@link FakeInventoryPort}
+ * stands in for the real HTTP call, via {@link FakeInventoryConfig} below.
+ * Standing up a second full Spring Boot application (with its own
+ * Testcontainers Postgres) just to test how order-service reacts to a
+ * reservation succeeding or failing is more integration than this test is
+ * actually responsible for — that reaction is this test's job;
+ * inventory-service's own reservation logic is inventory-service's test
+ * suite's job, and {@code InventoryClient} translating HTTP responses
+ * correctly is {@code InventoryClientTest}'s.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
@@ -37,6 +50,24 @@ class PlaceOrderEndToEndTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    @Autowired
+    private FakeInventoryPort fakeInventoryPort;
+
+    @BeforeEach
+    void resetFakeInventoryPort() {
+        fakeInventoryPort.setStockAvailable(true);
+    }
+
+    @TestConfiguration
+    static class FakeInventoryConfig {
+
+        @Bean
+        @Primary
+        FakeInventoryPort fakeInventoryPort() {
+            return new FakeInventoryPort();
+        }
+    }
 
     private static PlaceOrderRequest aRequest(UUID customerId) {
         return new PlaceOrderRequest(
@@ -70,6 +101,7 @@ class PlaceOrderEndToEndTest {
         assertThat(placed.currency()).isEqualTo("USD");
         assertThat(placed.totalPrice()).isEqualByComparingTo("19.98");
         assertThat(placed.placedAt()).isNotNull();
+        assertThat(fakeInventoryPort.wasReserved(placed.id())).isTrue();
 
         ResponseEntity<OrderResponse> getResponse =
                 restTemplate.getForEntity("/orders/" + placed.id(), OrderResponse.class);
@@ -105,6 +137,22 @@ class PlaceOrderEndToEndTest {
     }
 
     @Test
+    void placeOrder_cancelsOrderInstead_whenInventoryReportsStockUnavailable() {
+        fakeInventoryPort.setStockAvailable(false);
+
+        ResponseEntity<OrderResponse> response = place(UUID.randomUUID().toString(), aRequest(UUID.randomUUID()));
+
+        // Still 201: a real order record now exists, just not a placed
+        // one — see Order's own lifecycle Javadoc on why CANCELLED is
+        // reachable straight from CREATED for exactly this case.
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo("CANCELLED");
+        assertThat(response.getBody().placedAt()).isNull();
+        assertThat(response.getBody().cancelledAt()).isNotNull();
+    }
+
+    @Test
     void cancelOrder_transitionsToCancelled() {
         OrderResponse placed = place(UUID.randomUUID().toString(), aRequest(UUID.randomUUID())).getBody();
 
@@ -118,6 +166,17 @@ class PlaceOrderEndToEndTest {
         ResponseEntity<OrderResponse> getResponse =
                 restTemplate.getForEntity("/orders/" + placed.id(), OrderResponse.class);
         assertThat(getResponse.getBody().status()).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void cancelOrder_releasesInventoryReservation_whenOrderWasPlaced() {
+        OrderResponse placed = place(UUID.randomUUID().toString(), aRequest(UUID.randomUUID())).getBody();
+        assertThat(fakeInventoryPort.wasReserved(placed.id())).isTrue();
+        assertThat(fakeInventoryPort.wasReleased(placed.id())).isFalse();
+
+        restTemplate.postForEntity("/orders/" + placed.id() + "/cancel", null, OrderResponse.class);
+
+        assertThat(fakeInventoryPort.wasReleased(placed.id())).isTrue();
     }
 
     @Test

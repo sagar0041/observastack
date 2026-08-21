@@ -109,6 +109,30 @@ Rules:
   `reserve_throwsInsufficientStock_whenQuantityExceedsAvailable`.
 - Every bug fix starts with a failing test.
 
+## Idempotency
+
+Any endpoint that creates a resource as a side effect of a mutating call
+must be safe to retry, because a client that never sees the response
+(timeout, dropped connection) cannot tell "it failed" from "it succeeded
+and the response was lost" and will retry. Two acceptable shapes:
+
+- A client-supplied idempotency key on the request, checked against a
+  unique constraint before creating anything new (`order-service`'s
+  `POST /orders` — `Idempotency-Key` header, `IdempotencyKey` value
+  object, `uq_orders_idempotency_key`).
+- A natural key the caller already owns that the resource can only ever
+  have one of (`inventory-service`'s `POST /reservations` — `orderId` is
+  the natural key, since one order has at most one reservation;
+  `uq_reservations_order_id` backs it the same way).
+
+Either way, the unique constraint is the real guarantee, not the
+pre-check — a pre-check-then-insert has a race between two concurrent
+requests with the same key, so the repository implementation must also
+translate the resulting constraint violation into a domain exception
+rather than let it surface as an unhandled 500. See
+`OrderRepositoryImpl.save` and `ReservationRepositoryImpl.save` for the
+pattern.
+
 ## Definition of done
 
 A milestone is not done until:

@@ -6,6 +6,7 @@ import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OrderColumn;
@@ -32,6 +33,17 @@ import org.springframework.data.domain.Persistable;
  * null) always sees a non-null id and calls {@code merge()} instead of
  * {@code persist()} on every save, issuing a needless existence-checking
  * SELECT before every insert.
+ *
+ * <p>{@code lineItems} is fetched eagerly, against the JPA default: a
+ * repository port is a domain-owned abstraction with no notion of a
+ * Hibernate session, so an {@code Order} handed back by
+ * {@code OrderRepositoryImpl} needs to be fully usable whether or not
+ * the caller is still inside a transaction. Every call site today
+ * happens to be transactional, so lazy loading hasn't broken anything
+ * here yet — but inventory-service's equivalent collection hit exactly
+ * this failure the moment a repository method got called from outside
+ * an explicit transaction (see {@code ReservationEntity}), and nothing
+ * stops the same call shape from happening here in a later milestone.
  */
 @Entity
 @Table(name = "orders")
@@ -66,7 +78,7 @@ public class OrderEntity implements Persistable<UUID> {
     @Column(name = "cancelled_at")
     private Instant cancelledAt;
 
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "order_line_items", joinColumns = @JoinColumn(name = "order_id"))
     @OrderColumn(name = "line_number")
     private List<OrderLineItemEmbeddable> lineItems = new ArrayList<>();
