@@ -1,0 +1,87 @@
+databaseChangeLog:
+  - changeSet:
+      id: 0001-1-create-stock-items-table
+      author: observastack
+      changes:
+        - createTable:
+            tableName: stock_items
+            columns:
+              - column:
+                  name: sku
+                  type: varchar(64)
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: available_quantity
+                  type: integer
+                  constraints:
+                    nullable: false
+              - column:
+                  name: version
+                  type: bigint
+                  constraints:
+                    nullable: false
+
+  - changeSet:
+      id: 0001-2-create-reservations-table
+      author: observastack
+      changes:
+        - createTable:
+            tableName: reservations
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: order_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                    unique: true
+                    uniqueConstraintName: uq_reservations_order_id
+              - column:
+                  name: reserved_at
+                  type: timestamp with time zone
+                  constraints:
+                    nullable: false
+              - column:
+                  name: released_at
+                  type: timestamp with time zone
+
+  - changeSet:
+      id: 0001-3-create-reservation-lines-table
+      author: observastack
+      changes:
+        - createTable:
+            tableName: reservation_lines
+            columns:
+              - column:
+                  name: reservation_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                    foreignKeyName: fk_reservation_lines_reservation
+                    references: reservations(id)
+              - column:
+                  name: line_number
+                  type: integer
+                  constraints:
+                    nullable: false
+              - column:
+                  name: sku
+                  type: varchar(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: quantity
+                  type: integer
+                  constraints:
+                    nullable: false
+        - addPrimaryKey:
+            tableName: reservation_lines
+            columnNames: reservation_id, line_number
+            constraintName: pk_reservation_lines

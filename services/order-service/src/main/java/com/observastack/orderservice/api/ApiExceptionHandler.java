@@ -14,6 +14,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientException;
 
 /**
  * Translates domain and validation failures into HTTP error responses.
@@ -48,6 +49,18 @@ class ApiExceptionHandler {
                 .map(fieldError -> fieldError.getField() + " " + fieldError.getDefaultMessage())
                 .collect(Collectors.joining(", "));
         return ResponseEntity.badRequest().body(ErrorResponse.of(HttpStatus.BAD_REQUEST, message));
+    }
+
+    // StockUnavailableException itself has no handler here on purpose:
+    // PlaceOrderService catches it and turns it into a CANCELLED order,
+    // which is a normal 201 response, not an error. This handler is for
+    // the other, genuinely unexpected case — inventory-service down,
+    // timed out, or erroring — which InventoryClient deliberately leaves
+    // unstranslated so it can't be confused with "inventory said no."
+    @ExceptionHandler(RestClientException.class)
+    ResponseEntity<ErrorResponse> handleInventoryUnavailable(RestClientException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ErrorResponse.of(HttpStatus.SERVICE_UNAVAILABLE, "inventory service is currently unavailable; please retry"));
     }
 
     // Defense in depth: PlaceOrderRequest's Bean Validation constraints

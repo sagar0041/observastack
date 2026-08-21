@@ -53,35 +53,53 @@ docker compose --profile kafka up -d
 | Prometheus | http://localhost:9090    | —                |
 | Loki       | http://localhost:3100    | —                |
 | Tempo      | http://localhost:3200, OTLP on 4317 (gRPC) / 4318 (HTTP) | — |
-| PostgreSQL | localhost:5432            | observastack / observastack |
+| PostgreSQL | localhost:5432, databases `observastack` + `inventory` | observastack / observastack |
 | Kafka      | localhost:29092 (`--profile kafka`) | — |
 
 Grafana comes up with Prometheus, Loki, and Tempo already wired in as
 datasources — nothing to configure by hand.
 
-Once Postgres is up, run `order-service` (only service that exists so
-far — `inventory-service` and `payment-service` land in M3 and M8):
+`order-service` and `inventory-service` each get their own database on
+the same Postgres instance (ADR 0004); `infra/postgres/init-inventory-db.sh`
+creates `inventory` on first startup. If you ran `docker compose up`
+before M3, that init script never ran against your existing volume —
+`docker compose down -v` and bring Postgres back up to pick up the second
+database (this drops all local Postgres data).
+
+Once Postgres is up, run both services (`payment-service` lands in M8):
 
 ```bash
-mvn -pl services/order-service -am spring-boot:run
+mvn -pl services/inventory-service -am spring-boot:run   # http://localhost:8082
+mvn -pl services/order-service -am spring-boot:run       # http://localhost:8081
 ```
 
-It listens on http://localhost:8081 and migrates its own schema via
-Liquibase on startup.
+Each migrates its own schema via Liquibase on startup. `order-service`
+calls `inventory-service` synchronously over HTTP to reserve stock when
+placing an order, so start `inventory-service` first.
 
 ```bash
+# seed some stock
+curl -X POST http://localhost:8082/stock-items \
+  -H "Content-Type: application/json" \
+  -d '{"sku":"WIDGET-1","quantity":10}'
+
+# place an order — reserves stock in inventory-service synchronously
 curl -X POST http://localhost:8081/orders \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
   -d '{"customerId":"11111111-1111-1111-1111-111111111111","currency":"USD","lineItems":[{"sku":"WIDGET-1","quantity":2,"unitPrice":9.99}]}'
 
 curl http://localhost:8081/orders/{id}
-curl -X POST http://localhost:8081/orders/{id}/cancel
+curl -X POST http://localhost:8081/orders/{id}/cancel   # releases the reservation, if any
+
+curl http://localhost:8082/stock-items/WIDGET-1
 ```
 
 `Idempotency-Key` is required on `POST /orders` — a client retry that
 reuses the same key gets back the order already placed under it instead
-of creating a second one.
+of creating a second one. If inventory can't cover a line item, the order
+still gets created and is retrievable — just as `CANCELLED` rather than
+`PLACED`, with no reservation held (see `ROADMAP.md`'s M3 entry).
 
 ## Documentation
 
